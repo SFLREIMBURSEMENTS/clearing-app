@@ -1,7 +1,3 @@
-# ==============================================================================
-# Step 1: Setup and Installation
-# ==============================================================================
-
 import streamlit as st
 import pandas as pd
 from rapidfuzz import process, fuzz
@@ -9,7 +5,7 @@ import re
 import io
 
 # ==============================================================================
-# Step 2: Configuration
+# Step 1: Configuration
 # ==============================================================================
 NAME_WEIGHT = 0.90
 AMOUNT_WEIGHT = 0.10
@@ -23,9 +19,9 @@ CANDIDATE_SCORE_RANGE = 15
 NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
 
 # ==============================================================================
-# Step 3: Helper Functions
+# Step 2: All Helper Functions
 # ==============================================================================
-# ... (All helper functions remain exactly the same) ...
+# ... (All helper functions remain exactly the same as the previous version) ...
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower().strip()
@@ -136,16 +132,18 @@ def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
 # ==============================================================================
-# Step 3: The Streamlit UI
+# Step 3: The Streamlit UI (with Expandable Rows)
 # ==============================================================================
 st.set_page_config(layout="wide")
 st.title("🏦 Bank Transaction Matching Tool")
 
+# --- Initialize session state ---
 if 'matched_data' not in st.session_state:
     st.session_state.matched_data = None
 if 'editing_index' not in st.session_state:
     st.session_state.editing_index = None
 
+# --- File Upload ---
 st.header("Step 1: Upload Your Files")
 col1, col2 = st.columns(2)
 with col1:
@@ -153,12 +151,12 @@ with col1:
 with col2:
     bank_file = st.file_uploader("Upload Bank Statement (with 'narration', 'amount')", type="csv")
 
+# --- Processing Button ---
 if customer_file and bank_file:
     if st.button("Start Matching Process", type="primary"):
         with st.spinner("Processing... This may take a moment."):
             customers = pd.read_csv(customer_file, encoding='utf-8-sig')
             transactions = pd.read_csv(bank_file, encoding='utf-8-sig')
-
             if 'ledger_name' not in customers.columns:
                 if len(customers.columns) > 0:
                     first_col_name = customers.columns[0]
@@ -167,7 +165,6 @@ if customer_file and bank_file:
                 else:
                     st.error("Error: The customer file is empty or has no columns.")
                     st.stop()
-
             parser_regex = r'^(.*?)\s+(\d+\.?\d*)\s+([\w-]+)$'
             customers[['customer_name', 'emi_amount', 'customer_id']] = customers['ledger_name'].str.extract(parser_regex)
             customers['emi_amount'] = pd.to_numeric(customers['emi_amount'], errors='coerce').fillna(0)
@@ -175,7 +172,6 @@ if customer_file and bank_file:
             customers['clean_name'] = customers['customer_name'].apply(clean_text)
             transactions['extracted_name'] = transactions['narration'].apply(intelligent_name_extraction)
             customer_choices = customers['clean_name'].tolist()
-
             results_df = transactions.apply(
                 find_nearest_match,
                 args=(customers, customer_choices),
@@ -184,86 +180,17 @@ if customer_file and bank_file:
             results_df.columns = ['Matched Ledger Name', 'Other Candidates', 'Match Score', 'EMI Count', 'Name Score', 'Amount Score']
             final_df = pd.concat([transactions, results_df], axis=1)
             final_df['Selected Match'] = final_df['Matched Ledger Name']
-
             st.session_state.matched_data = final_df
             st.session_state.editing_index = None
-
         st.success("✅ Matching Complete! Please review the selections below.")
 
-# --- Popup Dialog Logic ---
-show_dialog = st.session_state.editing_index is not None
-
-# --- THIS IS THE CORRECTED STRUCTURE ---
-if show_dialog:
-    # Call st.dialog() directly
-    dialog = st.dialog("Edit Selection")
-    
-    # If the dialog should be open, proceed to draw its contents
-    if dialog: 
-        index = st.session_state.editing_index
-        row = st.session_state.matched_data.loc[index]
-
-        # Use st.write, st.radio etc. directly inside the 'if dialog:' block
-        st.write(f"**Narration:** {row['narration']}")
-        st.write(f"**Amount:** {row['amount']}")
-        st.divider()
-
-        options = []
-        if pd.notna(row['Matched Ledger Name']):
-            options.append(row['Matched Ledger Name'])
-        if pd.notna(row['Other Candidates']):
-            for item in row['Other Candidates'].split('; '):
-                options.append(item)
-        options = list(dict.fromkeys(options))
-        options.append(NONE_OPTION_TEXT)
-
-        current_selection_string = row['Selected Match']
-        if pd.isna(current_selection_string):
-             current_selection_string = NONE_OPTION_TEXT
-
-        try:
-            current_index = options.index(current_selection_string)
-        except ValueError:
-            current_index = 0
-
-        # Use st.radio directly
-        new_selection = st.radio(
-            "Choose the correct match:",
-            options,
-            index=current_index
-        )
-
-        col_save, col_cancel = st.columns(2)
-        # Use st.button directly
-        if col_save.button("Save", type="primary"):
-            if new_selection == NONE_OPTION_TEXT:
-                final_selection_name = None
-            elif "(Score:" in new_selection:
-                final_selection_name = new_selection.split(" (Score:")[0]
-            else:
-                final_selection_name = new_selection
-
-            st.session_state.matched_data.loc[index, 'Selected Match'] = final_selection_name
-            st.session_state.editing_index = None 
-            st.rerun()
-
-        # Use st.button directly
-        if col_cancel.button("Cancel"):
-            st.session_state.editing_index = None
-            st.rerun()
-            
-    # If the dialog returns False (e.g., user clicked outside), reset the editing state
-    else: 
-         st.session_state.editing_index = None
-         st.rerun()
-
-
-# --- Display the Data Table ---
+# --- Display the Data Table with Expandable Rows ---
 if st.session_state.matched_data is not None:
     st.header("Step 2: Review and Make Selections")
-    st.info("Click the 'Edit' button on any row to select an alternative match.")
+    st.info("Click the 'Edit' button on any row to expand options and select an alternative match.")
     df = st.session_state.matched_data
 
+    # --- Table Headers ---
     header_cols = st.columns([4, 1.5, 4, 1, 3, 1])
     header_cols[0].markdown("**Narration**")
     header_cols[1].markdown("**Amount**")
@@ -273,6 +200,7 @@ if st.session_state.matched_data is not None:
     header_cols[5].markdown("**Action**")
     st.divider()
 
+    # --- Table Rows ---
     for index, row in df.iterrows():
         row_cols = st.columns([4, 1.5, 4, 1, 3, 1])
         row_cols[0].write(row['narration'])
@@ -281,9 +209,61 @@ if st.session_state.matched_data is not None:
         row_cols[3].write(f"{row['Match Score']:.2f}")
         row_cols[4].write(row['Other Candidates'] if pd.notna(row['Other Candidates']) else "")
 
+        # Edit button - sets the index for the row being edited
         if row_cols[5].button("Edit", key=f"edit_{index}"):
-            st.session_state.editing_index = index 
-            st.rerun() 
+            st.session_state.editing_index = index # Set the row index
+            st.rerun() # Rerun to display the expander
+
+        # --- Expandable Section for Editing ---
+        # This section only appears for the row whose 'Edit' button was clicked
+        if st.session_state.editing_index == index:
+            with st.expander(f"Editing: {row['narration']}", expanded=True):
+                # Build the list of options
+                options = []
+                if pd.notna(row['Matched Ledger Name']):
+                    options.append(row['Matched Ledger Name'])
+                if pd.notna(row['Other Candidates']):
+                    for item in row['Other Candidates'].split('; '):
+                        options.append(item)
+                options = list(dict.fromkeys(options))
+                options.append(NONE_OPTION_TEXT)
+
+                current_selection_string = row['Selected Match']
+                if pd.isna(current_selection_string):
+                    current_selection_string = NONE_OPTION_TEXT
+                try:
+                    current_index = options.index(current_selection_string)
+                except ValueError:
+                    current_index = 0
+
+                # Radio buttons inside the expander
+                new_selection = st.radio(
+                    "Choose the correct match:",
+                    options,
+                    index=current_index,
+                    key=f"radio_{index}" # Unique key for radio
+                )
+
+                # Save and Cancel buttons inside the expander
+                exp_cols = st.columns([1,1,4]) # Layout for buttons
+                if exp_cols[0].button("Save", key=f"save_{index}", type="primary"):
+                    if new_selection == NONE_OPTION_TEXT:
+                        final_selection_name = None
+                    elif "(Score:" in new_selection:
+                        final_selection_name = new_selection.split(" (Score:")[0]
+                    else:
+                        final_selection_name = new_selection
+                    st.session_state.matched_data.loc[index, 'Selected Match'] = final_selection_name
+                    st.session_state.editing_index = None # Reset editing state
+                    st.rerun()
+
+                if exp_cols[1].button("Cancel", key=f"cancel_{index}"):
+                    st.session_state.editing_index = None # Reset editing state
+                    st.rerun()
+        
+        # Add a divider after each row for clarity
+        st.divider()
+
 
 # --- Download Button ---
 if st.session_state.matched_data is not None:
