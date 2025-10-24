@@ -16,9 +16,10 @@ MIDDLE_INITIAL_MISMATCH_PENALTY = 0.70
 MIDDLE_NAME_MISMATCH_PENALTY = 0.75
 UPI_MATCH_PENALTY = 0.75
 CANDIDATE_SCORE_RANGE = 15
+NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --" # New constant
 
 # ==============================================================================
-# Step 2: All Helper Functions (Our Matching Engine)
+# Step 2: All Helper Functions
 # ==============================================================================
 def clean_text(text):
     if not isinstance(text, str): return ''
@@ -136,23 +137,18 @@ def convert_df_to_csv(df):
 st.set_page_config(layout="wide")
 st.title("🏦 Bank Transaction Matching Tool")
 
-# --- Initialize session state ---
 if 'matched_data' not in st.session_state:
     st.session_state.matched_data = None
 if 'editing_index' not in st.session_state:
     st.session_state.editing_index = None
 
-# --- File Upload ---
 st.header("Step 1: Upload Your Files")
 col1, col2 = st.columns(2)
 with col1:
-    # --- THIS IS THE FIX ---
-    # The line below is now correctly indented
     customer_file = st.file_uploader("Upload Customer List (with 'ledger_name')", type="csv")
 with col2:
     bank_file = st.file_uploader("Upload Bank Statement (with 'narration', 'amount')", type="csv")
 
-# --- Processing Button ---
 if customer_file and bank_file:
     if st.button("Start Matching Process", type="primary"):
         with st.spinner("Processing... This may take a moment."):
@@ -190,7 +186,7 @@ if customer_file and bank_file:
         
         st.success("✅ Matching Complete! Please review the selections below.")
 
-# --- Popup Modal Logic ---
+# --- Popup Modal Logic (with "None" option) ---
 if st.session_state.editing_index is not None:
     with st.modal("Edit Selection"):
         index = st.session_state.editing_index
@@ -200,6 +196,7 @@ if st.session_state.editing_index is not None:
         st.write(f"**Amount:** {row['amount']}")
         st.divider()
 
+        # Build the list of options
         options = []
         if pd.notna(row['Matched Ledger Name']):
             options.append(row['Matched Ledger Name'])
@@ -207,8 +204,15 @@ if st.session_state.editing_index is not None:
             for item in row['Other Candidates'].split('; '):
                 options.append(item)
         options = list(dict.fromkeys(options)) 
+        
+        # --- NEW: Add the "None" option ---
+        options.append(NONE_OPTION_TEXT)
 
+        # --- NEW: Handle "None" as the current selection ---
         current_selection_string = row['Selected Match']
+        if pd.isna(current_selection_string):
+             current_selection_string = NONE_OPTION_TEXT
+
         try:
             current_index = options.index(current_selection_string)
         except ValueError:
@@ -222,7 +226,11 @@ if st.session_state.editing_index is not None:
         
         col_save, col_cancel = st.columns(2)
         if col_save.button("Save", type="primary"):
-            if "(Score:" in new_selection:
+            
+            # --- NEW: Handle saving the "None" option ---
+            if new_selection == NONE_OPTION_TEXT:
+                final_selection_name = None # Set to None/NaN
+            elif "(Score:" in new_selection:
                 final_selection_name = new_selection.split(" (Score:")[0]
             else:
                 final_selection_name = new_selection
@@ -254,7 +262,8 @@ if st.session_state.matched_data is not None:
         row_cols = st.columns([4, 1.5, 4, 1, 3, 1])
         row_cols[0].write(row['narration'])
         row_cols[1].write(row['amount'])
-        row_cols[2].write(row['Selected Match'])
+        # --- NEW: Display a blank if the selection is None ---
+        row_cols[2].write(row['Selected Match'] if pd.notna(row['Selected Match']) else "")
         row_cols[3].write(f"{row['Match Score']:.2f}")
         row_cols[4].write(row['Other Candidates'] if pd.notna(row['Other Candidates']) else "")
         
