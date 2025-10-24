@@ -92,11 +92,18 @@ def find_nearest_match(txn_row, cust_df, cust_choices):
     txn_amount = txn_row['amount']
     narration = txn_row['narration']
     is_upi_txn = "upi" in str(narration)[:15].lower()
+
+    # --- START OF MODIFIED SECTION ---
+    # The two failure cases now correctly return 6 items
     if not extracted_name or not cust_choices:
-        return pd.Series([None, None, None, 0, 0, 0, 0])
+        return pd.Series([None, None, 0, 0, 0, 0]) # 6 items
+    
     name_matches = process.extract(extracted_name, cust_choices, scorer=super_scorer, limit=5)
+
     if not name_matches:
-        return pd.Series([None, None, None, 0, 0, 0, 0])
+        return pd.Series([None, None, 0, 0, 0, 0]) # 6 items
+    # --- END OF MODIFIED SECTION ---
+
     candidates = []
     for _matched_name, name_score, index in name_matches:
         customer_info = cust_df.iloc[index]
@@ -111,15 +118,20 @@ def find_nearest_match(txn_row, cust_df, cust_choices):
             'name_score': name_score, 'amount_score': amount_score
         }
         candidates.append(candidate_info)
+    
     sorted_candidates = sorted(candidates, key=lambda x: x['final_score'], reverse=True)
     best_match = sorted_candidates[0]
+    
     other_candidates_list = []
     score_to_beat = best_match['final_score'] - CANDIDATE_SCORE_RANGE
     if len(sorted_candidates) > 1:
         for candidate in sorted_candidates[1:]:
              if candidate['final_score'] >= score_to_beat:
                  other_candidates_list.append(f"{candidate['ledger_name']} (Score: {candidate['final_score']:.2f})")
+    
     other_candidates = "; ".join(other_candidates_list) if other_candidates_list else None
+
+    # This success case also returns 6 items
     return pd.Series([
         best_match['ledger_name'], other_candidates,
         best_match['final_score'], best_match['emi_count'],
@@ -131,7 +143,7 @@ def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
 # ==============================================================================
-# Step 3: The Streamlit UI (The "Website" part)
+# Step 3: The Streamlit UI
 # ==============================================================================
 st.set_page_config(layout="wide")
 st.title("🏦 Bank Transaction Matching Tool")
@@ -152,13 +164,9 @@ if customer_file and bank_file:
     if st.button("Start Matching Process", type="primary"):
         with st.spinner("Processing... This may take a moment."):
             
-            # --- START OF MODIFIED SECTION ---
-            
-            # 1. Load data with encoding fix for invisible characters (BOM)
             customers = pd.read_csv(customer_file, encoding='utf-8-sig')
             transactions = pd.read_csv(bank_file, encoding='utf-8-sig')
 
-            # 2. Robust Column Handling for 'ledger_name'
             if 'ledger_name' not in customers.columns:
                 if len(customers.columns) > 0:
                     first_col_name = customers.columns[0]
@@ -168,28 +176,23 @@ if customer_file and bank_file:
                     st.error("Error: The customer file is empty or has no columns.")
                     st.stop()
             
-            # 3. Automated Data Splitting
             parser_regex = r'^(.*?)\s+(\d+\.?\d*)\s+([\w-]+)$'
-            
-            # --- END OF MODIFIED SECTION ---
-            
             customers[['customer_name', 'emi_amount', 'customer_id']] = customers['ledger_name'].str.extract(parser_regex)
 
-            # 4. Data Cleaning
             customers['emi_amount'] = pd.to_numeric(customers['emi_amount'], errors='coerce').fillna(0)
             transactions['amount'] = pd.to_numeric(transactions['amount'], errors='coerce').fillna(0)
             
-            # 5. Text Preprocessing
             customers['clean_name'] = customers['customer_name'].apply(clean_text)
             transactions['extracted_name'] = transactions['narration'].apply(intelligent_name_extraction)
             customer_choices = customers['clean_name'].tolist()
 
-            # 6. Run the matching
             results_df = transactions.apply(
                 find_nearest_match, 
                 args=(customers, customer_choices), 
                 axis=1
             )
+            
+            # This list now correctly has 6 names
             results_df.columns = ['Matched Ledger Name', 'Other Candidates', 'Match Score', 'EMI Count', 'Name Score', 'Amount Score']
             
             final_df = pd.concat([transactions, results_df], axis=1)
@@ -214,7 +217,7 @@ if st.session_state.matched_data is not None:
     st.info("Click any cell in the 'Selected Match' column to choose the main match or an alternative.")
     df_to_edit = st.session_state.matched_data
     
-    edited_df = st.data_editor(
+    edited_.df = st.data_editor(
         df_to_edit,
         column_config={
             "Selected Match": st.column_config.SelectboxColumn(
@@ -230,7 +233,7 @@ if st.session_state.matched_data is not None:
             "narration", "amount", "Selected Match", "Match Score", "Other Candidates"
         ],
         hide_index=True,
-        use_container_Twidth=True
+        use_container_width=True
     )
     st.session_state.final_selections = edited_df
 
