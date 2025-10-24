@@ -120,7 +120,7 @@ def find_nearest_match(txn_row, cust_df, cust_choices):
         for candidate in sorted_candidates[1:]:
              if candidate['final_score'] >= score_to_beat:
                  other_candidates_list.append(f"{candidate['ledger_name']} (Score: {candidate['final_score']:.2f})")
-    other_candidates = "; ".join(other_candidates_list) if other_candidates_list else None
+    other_candidates = "; ".joi(other_candidates_list) if other_candidates_list else None
     return pd.Series([
         best_match['ledger_name'], other_candidates,
         best_match['final_score'], best_match['emi_count'],
@@ -189,7 +189,7 @@ if customer_file and bank_file:
 # --- Popup Modal Logic (with "None" option) ---
 #  *** THIS IS THE LINE THAT WAS FIXED ***
 if st.session_state.editing_index is not None:
-    with st.dialog("Edit Selection"): # Changed from st.modal to st.dialog
+    with st.modal("Edit Selection"): # Changed back to st.modal
         index = st.session_state.editing_index
         row = st.session_state.matched_data.loc[index]
 
