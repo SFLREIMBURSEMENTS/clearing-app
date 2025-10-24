@@ -16,7 +16,7 @@ MIDDLE_INITIAL_MISMATCH_PENALTY = 0.70
 MIDDLE_NAME_MISMATCH_PENALTY = 0.75
 UPI_MATCH_PENALTY = 0.75
 CANDIDATE_SCORE_RANGE = 15
-NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --" # New constant
+NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --" 
 
 # ==============================================================================
 # Step 2: All Helper Functions
@@ -187,8 +187,9 @@ if customer_file and bank_file:
         st.success("✅ Matching Complete! Please review the selections below.")
 
 # --- Popup Modal Logic (with "None" option) ---
+#  *** THIS IS THE LINE THAT WAS FIXED ***
 if st.session_state.editing_index is not None:
-    with st.modal("Edit Selection"):
+    with st.dialog("Edit Selection"): # Changed from st.modal to st.dialog
         index = st.session_state.editing_index
         row = st.session_state.matched_data.loc[index]
 
@@ -196,7 +197,6 @@ if st.session_state.editing_index is not None:
         st.write(f"**Amount:** {row['amount']}")
         st.divider()
 
-        # Build the list of options
         options = []
         if pd.notna(row['Matched Ledger Name']):
             options.append(row['Matched Ledger Name'])
@@ -205,10 +205,8 @@ if st.session_state.editing_index is not None:
                 options.append(item)
         options = list(dict.fromkeys(options)) 
         
-        # --- NEW: Add the "None" option ---
         options.append(NONE_OPTION_TEXT)
 
-        # --- NEW: Handle "None" as the current selection ---
         current_selection_string = row['Selected Match']
         if pd.isna(current_selection_string):
              current_selection_string = NONE_OPTION_TEXT
@@ -227,9 +225,8 @@ if st.session_state.editing_index is not None:
         col_save, col_cancel = st.columns(2)
         if col_save.button("Save", type="primary"):
             
-            # --- NEW: Handle saving the "None" option ---
             if new_selection == NONE_OPTION_TEXT:
-                final_selection_name = None # Set to None/NaN
+                final_selection_name = None 
             elif "(Score:" in new_selection:
                 final_selection_name = new_selection.split(" (Score:")[0]
             else:
@@ -262,7 +259,6 @@ if st.session_state.matched_data is not None:
         row_cols = st.columns([4, 1.5, 4, 1, 3, 1])
         row_cols[0].write(row['narration'])
         row_cols[1].write(row['amount'])
-        # --- NEW: Display a blank if the selection is None ---
         row_cols[2].write(row['Selected Match'] if pd.notna(row['Selected Match']) else "")
         row_cols[3].write(f"{row['Match Score']:.2f}")
         row_cols[4].write(row['Other Candidates'] if pd.notna(row['Other Candidates']) else "")
