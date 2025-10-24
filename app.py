@@ -1,7 +1,6 @@
 # ==============================================================================
 # Step 1: Setup and Installation
 # ==============================================================================
-!pip install rapidfuzz pandas joblib -q
 
 import streamlit as st
 import pandas as pd
