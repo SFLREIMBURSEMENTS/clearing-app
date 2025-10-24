@@ -21,7 +21,6 @@ NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
 # ==============================================================================
 # Step 2: All Helper Functions
 # ==============================================================================
-# ... (All helper functions like clean_text, intelligent_name_extraction, super_scorer, get_amount_score remain exactly the same) ...
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower().strip()
@@ -33,7 +32,6 @@ def clean_text(text):
 def intelligent_name_extraction(narration):
     if not isinstance(narration, str): return ''
     narration_lower = narration.lower()
-
     if "upi" in narration_lower[:15]:
         upi_ids = re.findall(r'[\w.-]+@[\w.-]+', narration_lower)
         if not upi_ids: return ""
@@ -133,7 +131,7 @@ def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
 # ==============================================================================
-# Step 3: The Streamlit UI (with Popup Modal)
+# Step 3: The Streamlit UI
 # ==============================================================================
 st.set_page_config(layout="wide")
 st.title("🏦 Bank Transaction Matching Tool")
@@ -164,7 +162,7 @@ if customer_file and bank_file:
                 else:
                     st.error("Error: The customer file is empty or has no columns.")
                     st.stop()
-            
+
             parser_regex = r'^(.*?)\s+(\d+\.?\d*)\s+([\w-]+)$'
             customers[['customer_name', 'emi_amount', 'customer_id']] = customers['ledger_name'].str.extract(parser_regex)
             customers['emi_amount'] = pd.to_numeric(customers['emi_amount'], errors='coerce').fillna(0)
@@ -174,29 +172,35 @@ if customer_file and bank_file:
             customer_choices = customers['clean_name'].tolist()
 
             results_df = transactions.apply(
-                find_nearest_match, 
-                args=(customers, customer_choices), 
+                find_nearest_match,
+                args=(customers, customer_choices),
                 axis=1
             )
             results_df.columns = ['Matched Ledger Name', 'Other Candidates', 'Match Score', 'EMI Count', 'Name Score', 'Amount Score']
             final_df = pd.concat([transactions, results_df], axis=1)
             final_df['Selected Match'] = final_df['Matched Ledger Name']
-            
+
             st.session_state.matched_data = final_df
-            st.session_state.editing_index = None 
-        
+            st.session_state.editing_index = None
+
         st.success("✅ Matching Complete! Please review the selections below.")
 
-# --- Popup Modal Logic (with "None" option) ---
-#  *** THIS IS THE LINE THAT WAS FIXED ***
-if st.session_state.editing_index is not None:
-    with st.dialog("Edit Selection"): # Changed back to st.dialog
+# --- Popup Dialog Logic ---
+# Check if we should be showing the dialog
+show_dialog = st.session_state.editing_index is not None
+
+# If show_dialog is True, this creates the dialog and returns True
+# If the user closes it, it returns False on the next run
+if show_dialog:
+    # --- THIS IS THE CORRECTED STRUCTURE ---
+    dialog = st.dialog("Edit Selection")
+    if dialog: # Check if dialog should be displayed
         index = st.session_state.editing_index
         row = st.session_state.matched_data.loc[index]
 
-        st.write(f"**Narration:** {row['narration']}")
-        st.write(f"**Amount:** {row['amount']}")
-        st.divider()
+        dialog.write(f"**Narration:** {row['narration']}")
+        dialog.write(f"**Amount:** {row['amount']}")
+        dialog.divider()
 
         options = []
         if pd.notna(row['Matched Ledger Name']):
@@ -204,8 +208,7 @@ if st.session_state.editing_index is not None:
         if pd.notna(row['Other Candidates']):
             for item in row['Other Candidates'].split('; '):
                 options.append(item)
-        options = list(dict.fromkeys(options)) 
-        
+        options = list(dict.fromkeys(options))
         options.append(NONE_OPTION_TEXT)
 
         current_selection_string = row['Selected Match']
@@ -217,29 +220,32 @@ if st.session_state.editing_index is not None:
         except ValueError:
             current_index = 0
 
-        new_selection = st.radio(
+        new_selection = dialog.radio(
             "Choose the correct match:",
             options,
             index=current_index
         )
-        
-        col_save, col_cancel = st.columns(2)
+
+        col_save, col_cancel = dialog.columns(2)
         if col_save.button("Save", type="primary"):
-            
             if new_selection == NONE_OPTION_TEXT:
-                final_selection_name = None 
+                final_selection_name = None
             elif "(Score:" in new_selection:
                 final_selection_name = new_selection.split(" (Score:")[0]
             else:
                 final_selection_name = new_selection
-                
+
             st.session_state.matched_data.loc[index, 'Selected Match'] = final_selection_name
-            st.session_state.editing_index = None 
+            st.session_state.editing_index = None # Reset editing state to close dialog implicitly
             st.rerun()
-        
+
         if col_cancel.button("Cancel"):
-            st.session_state.editing_index = None
+            st.session_state.editing_index = None # Reset editing state to close dialog implicitly
             st.rerun()
+    else: # If dialog returns False (user closed it), reset state
+         st.session_state.editing_index = None
+         st.rerun()
+
 
 # --- Display the Data Table ---
 if st.session_state.matched_data is not None:
@@ -263,21 +269,18 @@ if st.session_state.matched_data is not None:
         row_cols[2].write(row['Selected Match'] if pd.notna(row['Selected Match']) else "")
         row_cols[3].write(f"{row['Match Score']:.2f}")
         row_cols[4].write(row['Other Candidates'] if pd.notna(row['Other Candidates']) else "")
-        
+
         if row_cols[5].button("Edit", key=f"edit_{index}"):
-            st.session_state.editing_index = index 
-            st.rerun()
+            st.session_state.editing_index = index # Set the row index to trigger dialog
+            st.rerun() # Rerun to display the dialog
 
 # --- Download Button ---
 if st.session_state.matched_data is not None:
     st.header("Step 3: Download Your Final Report")
-    
     final_output_df = st.session_state.matched_data[
         ['narration', 'amount', 'Selected Match', 'Match Score', 'Other Candidates']
     ]
-    
     csv_data = convert_df_to_csv(final_output_df)
-    
     st.download_button(
         label="Download Final CSV",
         data=csv_data,
