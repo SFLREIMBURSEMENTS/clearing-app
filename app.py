@@ -1,3 +1,8 @@
+# ==============================================================================
+# Step 1: Setup and Installation
+# ==============================================================================
+!pip install rapidfuzz pandas joblib -q
+
 import streamlit as st
 import pandas as pd
 from rapidfuzz import process, fuzz
@@ -5,7 +10,7 @@ import re
 import io
 
 # ==============================================================================
-# Step 1: Configuration
+# Step 2: Configuration
 # ==============================================================================
 NAME_WEIGHT = 0.90
 AMOUNT_WEIGHT = 0.10
@@ -19,8 +24,9 @@ CANDIDATE_SCORE_RANGE = 15
 NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
 
 # ==============================================================================
-# Step 2: All Helper Functions
+# Step 3: Helper Functions
 # ==============================================================================
+# ... (All helper functions remain exactly the same) ...
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower().strip()
@@ -186,21 +192,22 @@ if customer_file and bank_file:
         st.success("✅ Matching Complete! Please review the selections below.")
 
 # --- Popup Dialog Logic ---
-# Check if we should be showing the dialog
 show_dialog = st.session_state.editing_index is not None
 
-# If show_dialog is True, this creates the dialog and returns True
-# If the user closes it, it returns False on the next run
+# --- THIS IS THE CORRECTED STRUCTURE ---
 if show_dialog:
-    # --- THIS IS THE CORRECTED STRUCTURE ---
+    # Call st.dialog() directly
     dialog = st.dialog("Edit Selection")
-    if dialog: # Check if dialog should be displayed
+    
+    # If the dialog should be open, proceed to draw its contents
+    if dialog: 
         index = st.session_state.editing_index
         row = st.session_state.matched_data.loc[index]
 
-        dialog.write(f"**Narration:** {row['narration']}")
-        dialog.write(f"**Amount:** {row['amount']}")
-        dialog.divider()
+        # Use st.write, st.radio etc. directly inside the 'if dialog:' block
+        st.write(f"**Narration:** {row['narration']}")
+        st.write(f"**Amount:** {row['amount']}")
+        st.divider()
 
         options = []
         if pd.notna(row['Matched Ledger Name']):
@@ -220,13 +227,15 @@ if show_dialog:
         except ValueError:
             current_index = 0
 
-        new_selection = dialog.radio(
+        # Use st.radio directly
+        new_selection = st.radio(
             "Choose the correct match:",
             options,
             index=current_index
         )
 
-        col_save, col_cancel = dialog.columns(2)
+        col_save, col_cancel = st.columns(2)
+        # Use st.button directly
         if col_save.button("Save", type="primary"):
             if new_selection == NONE_OPTION_TEXT:
                 final_selection_name = None
@@ -236,13 +245,16 @@ if show_dialog:
                 final_selection_name = new_selection
 
             st.session_state.matched_data.loc[index, 'Selected Match'] = final_selection_name
-            st.session_state.editing_index = None # Reset editing state to close dialog implicitly
+            st.session_state.editing_index = None 
             st.rerun()
 
+        # Use st.button directly
         if col_cancel.button("Cancel"):
-            st.session_state.editing_index = None # Reset editing state to close dialog implicitly
+            st.session_state.editing_index = None
             st.rerun()
-    else: # If dialog returns False (user closed it), reset state
+            
+    # If the dialog returns False (e.g., user clicked outside), reset the editing state
+    else: 
          st.session_state.editing_index = None
          st.rerun()
 
@@ -271,8 +283,8 @@ if st.session_state.matched_data is not None:
         row_cols[4].write(row['Other Candidates'] if pd.notna(row['Other Candidates']) else "")
 
         if row_cols[5].button("Edit", key=f"edit_{index}"):
-            st.session_state.editing_index = index # Set the row index to trigger dialog
-            st.rerun() # Rerun to display the dialog
+            st.session_state.editing_index = index 
+            st.rerun() 
 
 # --- Download Button ---
 if st.session_state.matched_data is not None:
