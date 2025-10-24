@@ -11,16 +11,17 @@ NAME_WEIGHT = 0.90
 AMOUNT_WEIGHT = 0.10
 AMOUNT_TOLERANCE_LOWER = 0.05
 AMOUNT_TOLERANCE_UPPER = 0.20
-FIRST_NAME_INTEGRITY_PENALTY = 0.75 
+FIRST_NAME_INTEGRITY_PENALTY = 0.75
 MIDDLE_INITIAL_MISMATCH_PENALTY = 0.70
 MIDDLE_NAME_MISMATCH_PENALTY = 0.75
 UPI_MATCH_PENALTY = 0.75
 CANDIDATE_SCORE_RANGE = 15
-NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --" 
+NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
 
 # ==============================================================================
 # Step 2: All Helper Functions
 # ==============================================================================
+# ... (All helper functions like clean_text, intelligent_name_extraction, super_scorer, get_amount_score remain exactly the same) ...
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower().strip()
@@ -120,10 +121,7 @@ def find_nearest_match(txn_row, cust_df, cust_choices):
         for candidate in sorted_candidates[1:]:
              if candidate['final_score'] >= score_to_beat:
                  other_candidates_list.append(f"{candidate['ledger_name']} (Score: {candidate['final_score']:.2f})")
-    
-    # --- THIS IS THE LINE THAT WAS FIXED ---
     other_candidates = "; ".join(other_candidates_list) if other_candidates_list else None
-    
     return pd.Series([
         best_match['ledger_name'], other_candidates,
         best_match['final_score'], best_match['emi_count'],
@@ -189,8 +187,10 @@ if customer_file and bank_file:
         
         st.success("✅ Matching Complete! Please review the selections below.")
 
+# --- Popup Modal Logic (with "None" option) ---
+#  *** THIS IS THE LINE THAT WAS FIXED ***
 if st.session_state.editing_index is not None:
-    with st.modal("Edit Selection"): 
+    with st.dialog("Edit Selection"): # Changed back to st.dialog
         index = st.session_state.editing_index
         row = st.session_state.matched_data.loc[index]
 
@@ -241,6 +241,7 @@ if st.session_state.editing_index is not None:
             st.session_state.editing_index = None
             st.rerun()
 
+# --- Display the Data Table ---
 if st.session_state.matched_data is not None:
     st.header("Step 2: Review and Make Selections")
     st.info("Click the 'Edit' button on any row to select an alternative match.")
@@ -267,6 +268,7 @@ if st.session_state.matched_data is not None:
             st.session_state.editing_index = index 
             st.rerun()
 
+# --- Download Button ---
 if st.session_state.matched_data is not None:
     st.header("Step 3: Download Your Final Report")
     
