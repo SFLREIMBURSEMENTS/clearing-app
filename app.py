@@ -21,7 +21,6 @@ NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
 # ==============================================================================
 # Step 2: All Helper Functions
 # ==============================================================================
-# ... (All helper functions remain exactly the same) ...
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower().strip()
@@ -88,16 +87,22 @@ def get_amount_score(transaction_amt, emi_amt):
                 best_score, best_multiplier = score, multiplier
     return max(0, best_score), best_multiplier
 
+# --- MODIFIED: This function now returns both 'Other Candidates' and 'Selection Options' ---
 def find_nearest_match(txn_row, cust_df, cust_choices):
     extracted_name = txn_row['extracted_name']
     txn_amount = txn_row['amount']
     narration = txn_row['narration']
     is_upi_txn = "upi" in str(narration)[:15].lower()
+    
+    # Return 8 Nones on failure
     if not extracted_name or not cust_choices:
-        return pd.Series([None, None, 0, 0, 0, 0])
+        return pd.Series([None, None, None, 0, 0, 0, 0, None])
+        
     name_matches = process.extract(extracted_name, cust_choices, scorer=super_scorer, limit=5)
+    
     if not name_matches:
-        return pd.Series([None, None, 0, 0, 0, 0])
+        return pd.Series([None, None, None, 0, 0, 0, 0, None])
+
     candidates = []
     for _matched_name, name_score, index in name_matches:
         customer_info = cust_df.iloc[index]
@@ -112,24 +117,34 @@ def find_nearest_match(txn_row, cust_df, cust_choices):
             'name_score': name_score, 'amount_score': amount_score
         }
         candidates.append(candidate_info)
+    
     sorted_candidates = sorted(candidates, key=lambda x: x['final_score'], reverse=True)
     best_match = sorted_candidates[0]
     
-    options = []
+    # --- Create both lists ---
+    options_for_radio = []
+    other_candidates_for_display = []
+    
     if pd.notna(best_match['ledger_name']):
-        options.append(best_match['ledger_name'])
+        options_for_radio.append(best_match['ledger_name'])
+        
     score_to_beat = best_match['final_score'] - CANDIDATE_SCORE_RANGE
+    
     if len(sorted_candidates) > 1:
         for candidate in sorted_candidates[1:]:
              if candidate['final_score'] >= score_to_beat:
-                 options.append(f"{candidate['ledger_name']} (Score: {candidate['final_score']:.2f})")
-    options = list(dict.fromkeys(options)) 
-    options.append(NONE_OPTION_TEXT)
+                 candidate_string = f"{candidate['ledger_name']} (Score: {candidate['final_score']:.2f})"
+                 options_for_radio.append(candidate_string)
+                 other_candidates_for_display.append(candidate_string)
+
+    other_candidates = "; ".join(other_candidates_for_display) if other_candidates_for_display else None
+    options_for_radio.append(NONE_OPTION_TEXT)
 
     return pd.Series([
-        best_match['ledger_name'], options,
+        best_match['ledger_name'], other_candidates, options_for_radio,
         best_match['final_score'], best_match['emi_count'],
-        best_match['name_score'], best_match['amount_score']
+        best_match['name_score'], best_match['amount_score'],
+        best_match['customer_id'] # Pass this for the download
     ])
 
 @st.cache_data
@@ -144,8 +159,8 @@ st.title("🏦 Bank Transaction Matching Tool")
 
 if 'matched_data' not in st.session_state:
     st.session_state.matched_data = None
-if 'editor_key' not in st.session_state:
-    st.session_state.editor_key = "data_editor_0"
+# Use a simple, static key for the data editor
+EDITOR_KEY = "data_editor_main"
 
 st.header("Step 1: Upload Your Files")
 col1, col2 = st.columns(2)
@@ -167,23 +182,27 @@ if customer_file and bank_file:
                 else:
                     st.error("Error: The customer file is empty or has no columns.")
                     st.stop()
+            
             parser_regex = r'^(.*?)\s+(\d+\.?\d*)\s+([\w-]+)$'
             customers[['customer_name', 'emi_amount', 'customer_id']] = customers['ledger_name'].str.extract(parser_regex)
+            
             customers['emi_amount'] = pd.to_numeric(customers['emi_amount'], errors='coerce').fillna(0)
             transactions['amount'] = pd.to_numeric(transactions['amount'], errors='coerce').fillna(0)
             customers['clean_name'] = customers['customer_name'].apply(clean_text)
             transactions['extracted_name'] = transactions['narration'].apply(intelligent_name_extraction)
             customer_choices = customers['clean_name'].tolist()
+            
             results_df = transactions.apply(
                 find_nearest_match,
                 args=(customers, customer_choices),
                 axis=1
             )
-            results_df.columns = ['Matched Ledger Name', 'Selection Options', 'Match Score', 'EMI Count', 'Name Score', 'Amount Score']
+            # Add the new column names
+            results_df.columns = ['Matched Ledger Name', 'Other Candidates', 'Selection Options', 'Match Score', 'EMI Count', 'Name Score', 'Amount Score', 'Matched Customer ID']
             final_df = pd.concat([transactions, results_df], axis=1)
             final_df['Selected Match'] = final_df['Matched Ledger Name']
+            final_df['Selected ID'] = final_df['Matched Customer ID']
             
-            st.session_state.editor_key = f"data_editor_{pd.Timestamp.now().isoformat()}"
             st.session_state.matched_data = final_df
         
         st.success("✅ Matching Complete! Please review the selections below.")
@@ -194,28 +213,34 @@ if st.session_state.matched_data is not None:
     
     df_to_display = st.session_state.matched_data.copy()
 
-    # --- THIS IS THE FIX ---
-    # The invalid "on_select" parameter has been removed.
     edited_df = st.data_editor(
         df_to_display,
-        key=st.session_state.editor_key, 
+        key=EDITOR_KEY, # Use the static key
         column_config={
             "Selected Match": st.column_config.TextColumn(
                 "Selected Match",
                 width="large"
             ),
+            # This is the old-style column you preferred, now visible
+            "Other Candidates": st.column_config.TextColumn(
+                "Other Candidates",
+                width="large"
+            ),
+            # Hide helper columns
             "Selection Options": None, "extracted_name": None, "Matched Ledger Name": None,
-            "EMI Count": None, "Name Score": None, "Amount Score": None
+            "EMI Count": None, "Name Score": None, "Amount Score": "Matched Customer ID",
+            "Selected ID": None
         },
+        # Add 'Other Candidates' back to the display
         column_order=[
-            "narration", "amount", "Selected Match", "Match Score"
+            "narration", "amount", "Selected Match", "Match Score", "Other Candidates"
         ],
         hide_index=True,
         use_container_width=True
     )
 
     # --- Step 3: The "Click-to-Edit" Panel ---
-    selection = st.session_state[st.session_state.editor_key].get("selection")
+    selection = st.session_state[EDITOR_KEY].get("selection")
     
     if selection and selection["rows"]:
         selected_index = selection["rows"][-1] 
@@ -262,8 +287,9 @@ if st.session_state.matched_data is not None:
 if st.session_state.matched_data is not None:
     st.header("Step 4: Download Your Final Report")
     
+    # The dataframe in session_state always has the latest edits
     final_output_df = st.session_state.matched_data[
-        ['narration', 'amount', 'Selected Match', 'Match Score']
+        ['narration', 'amount', 'Selected Match', 'Match Score', 'Other Candidates']
     ]
     
     csv_data = convert_df_to_csv(final_output_df)
