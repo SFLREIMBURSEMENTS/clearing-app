@@ -17,7 +17,9 @@ MIDDLE_NAME_MISMATCH_PENALTY = 0.75
 UPI_MATCH_PENALTY = 0.75
 CANDIDATE_SCORE_RANGE = 15
 NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
-MIDDLE_NAME_SIMILARITY_THRESHOLD = 90
+# --- THIS IS THE FIX ---
+# Lowered threshold to 80 to catch typos like "ishwer" vs "ishvar"
+MIDDLE_NAME_SIMILARITY_THRESHOLD = 80
 
 # ==============================================================================
 # Step 2: All Helper Functions
@@ -30,7 +32,6 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-# --- UPDATED: More robust extraction logic ---
 def intelligent_name_extraction(narration):
     if not isinstance(narration, str): return ''
     narration_lower = narration.lower()
@@ -43,25 +44,14 @@ def intelligent_name_extraction(narration):
         cleaned_name = re.sub(r'[^a-z\s]', ' ', name_part).strip()
         cleaned_name = re.sub(r'\s+', ' ', cleaned_name)
         return cleaned_name
-    
-    # --- NEW LOGIC for non-UPI ---
     else:
-        # 1. Find "deposit by" and take everything after it
-        if "deposit by" in narration_lower:
-            text = narration_lower.split("deposit by", 1)[-1]
-        else:
-            text = narration_lower
-
-        # 2. Remove honorifics
+        text = narration_lower
+        if "deposit by" in text:
+            text = text.split("deposit by", 1)[-1]
+        
         text = re.sub(r'(bhai|sinh|kumar|mohd|mohammed|ben)', ' ', text, flags=re.IGNORECASE)
-        
-        # 3. Remove PAN-like codes
         text = re.sub(r'\b[a-z]{5}\d{4}[a-z]\b', ' ', text, flags=re.IGNORECASE)
-        
-        # 4. Remove all remaining non-letters (and numbers)
         text = re.sub(r'[^a-z\s]', '', text)
-        
-        # 5. Collapse spaces
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
@@ -84,6 +74,7 @@ def super_scorer(s1, s2, **kwargs):
     if len(s1_words) >= 3 and len(s2_words) >= 3:
         if s1_words[0] == s2_words[0] and s1_words[-1] == s2_words[-1]:
             middle_name_similarity = fuzz.ratio(s1_words[1], s2_words[1])
+            # This condition is now fixed
             if middle_name_similarity < MIDDLE_NAME_SIMILARITY_THRESHOLD:
                 return base_score * MIDDLE_NAME_MISMATCH_PENALTY
 
