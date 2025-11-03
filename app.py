@@ -17,13 +17,11 @@ MIDDLE_NAME_MISMATCH_PENALTY = 0.75
 UPI_MATCH_PENALTY = 0.75
 CANDIDATE_SCORE_RANGE = 15
 NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
+MIDDLE_NAME_SIMILARITY_THRESHOLD = 90
 
 # ==============================================================================
 # Step 2: All Helper Functions
 # ==============================================================================
-# ... (All helper functions: clean_text, intelligent_name_extraction, super_scorer, get_amount_score, find_nearest_match) ...
-# (These are unchanged from the previous version)
-
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower().strip()
@@ -32,9 +30,11 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
+# --- UPDATED: More robust extraction logic ---
 def intelligent_name_extraction(narration):
     if not isinstance(narration, str): return ''
     narration_lower = narration.lower()
+
     if "upi" in narration_lower[:15]:
         upi_ids = re.findall(r'[\w.-]+@[\w.-]+', narration_lower)
         if not upi_ids: return ""
@@ -43,17 +43,25 @@ def intelligent_name_extraction(narration):
         cleaned_name = re.sub(r'[^a-z\s]', ' ', name_part).strip()
         cleaned_name = re.sub(r'\s+', ' ', cleaned_name)
         return cleaned_name
+    
+    # --- NEW LOGIC for non-UPI ---
     else:
-        text = narration_lower
+        # 1. Find "deposit by" and take everything after it
+        if "deposit by" in narration_lower:
+            text = narration_lower.split("deposit by", 1)[-1]
+        else:
+            text = narration_lower
+
+        # 2. Remove honorifics
         text = re.sub(r'(bhai|sinh|kumar|mohd|mohammed|ben)', ' ', text, flags=re.IGNORECASE)
-        noise_patterns = [
-            r'csh dep:[a-z]+', r'deposit by', r'cash deposit',
-            r'\b(csh|dep|cash|by|tfr|frm|trf|fr|internal|account)\b',
-            r'\d{10,}'
-        ]
-        for pattern in noise_patterns:
-            text = re.sub(pattern, ' ', text, flags=re.IGNORECASE)
+        
+        # 3. Remove PAN-like codes
+        text = re.sub(r'\b[a-z]{5}\d{4}[a-z]\b', ' ', text, flags=re.IGNORECASE)
+        
+        # 4. Remove all remaining non-letters (and numbers)
         text = re.sub(r'[^a-z\s]', '', text)
+        
+        # 5. Collapse spaces
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
@@ -66,15 +74,24 @@ def super_scorer(s1, s2, **kwargs):
     if len(s1_words) == 3 and len(s2_words) == 3 and len(s1_words[1]) == 1:
         if s1_words[0] == s2_words[0] and s1_words[2] == s2_words[2] and s1_words[1][0] == s2_words[1][0]:
             return 96.0
+            
     base_score = fuzz.token_set_ratio(s1, s2)
+    
     if len(s1_words) == 3 and len(s1_words[1]) == 1 and len(s2_words) == 3:
-        if s1_words[1][0] != s2_words[1][0]: return base_score * MIDDLE_INITIAL_MISMATCH_PENALTY
+        if s1_words[1][0] != s2_words[1][0]:
+            return base_score * MIDDLE_INITIAL_MISMATCH_PENALTY
+            
     if len(s1_words) >= 3 and len(s2_words) >= 3:
-        if s1_words[0] == s2_words[0] and s1_words[-1] == s2_words[-1] and s1_words[1] != s2_words[1]:
-            return base_score * MIDDLE_NAME_MISMATCH_PENALTY
+        if s1_words[0] == s2_words[0] and s1_words[-1] == s2_words[-1]:
+            middle_name_similarity = fuzz.ratio(s1_words[1], s2_words[1])
+            if middle_name_similarity < MIDDLE_NAME_SIMILARITY_THRESHOLD:
+                return base_score * MIDDLE_NAME_MISMATCH_PENALTY
+
     if s1_words and s2_words and s2_words[0] not in s1_words:
          return base_score * FIRST_NAME_INTEGRITY_PENALTY
+    
     return base_score
+
 
 def get_amount_score(transaction_amt, emi_amt):
     best_score, best_multiplier = 0, 0
@@ -141,7 +158,7 @@ def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
 # ==============================================================================
-# Step 3: The Streamlit UI (with Pagination and Expandable Radio Buttons)
+# Step 3: The Streamlit UI
 # ==============================================================================
 st.set_page_config(layout="wide")
 st.title("🏦 Bank Transaction Matching Tool")
@@ -258,13 +275,11 @@ if st.session_state.matched_data is not None:
                 except ValueError:
                     current_index = 0
 
-                # --- THIS IS THE FIX ---
-                # Changed from st.selectbox to st.radio
                 new_selection = st.radio(
                     "Choose the correct match:",
                     options,
                     index=current_index,
-                    key=f"radio_{index}" # Changed key to avoid conflict
+                    key=f"radio_{index}"
                 )
 
                 exp_cols = st.columns([1,1,4])
