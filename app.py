@@ -10,7 +10,8 @@ import hmac # Used for secure password checking
 # ==============================================================================
 NAME_WEIGHT = 0.90
 AMOUNT_WEIGHT = 0.10
-# ... (rest of your configuration remains the same) ...
+AMOUNT_TOLERANCE_LOWER = 0.05
+AMOUNT_TOLERANCE_UPPER = 0.20
 FIRST_NAME_INTEGRITY_PENALTY = 0.75
 MIDDLE_INITIAL_MISMATCH_PENALTY = 0.70
 MIDDLE_NAME_MISMATCH_PENALTY = 0.75
@@ -20,43 +21,61 @@ NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
 TYPO_SIMILARITY_THRESHOLD = 80
 
 # ==============================================================================
-# Step 2: Password Check Function
+# Step 2: Password Check Function (Beautified)
 # ==============================================================================
 
 def check_password():
     """Returns `True` if the user entered the correct password."""
 
-    def password_entered():
-        """Checks whether a password entered by the user is correct."""
-        if hmac.compare_digest(st.session_state["password"], st.secrets["password"]):
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Don't store password.
-        else:
-            st.session_state["password_correct"] = False
-
-    # Return True if the passward is validated.
+    # Return True if the password is already validated.
     if st.session_state.get("password_correct", False):
         return True
 
-    # Show input for password.
-    st.text_input(
-        "Password", type="password", on_change=password_entered, key="password"
-    )
-    if "password_correct" in st.session_state and not st.session_state.password_correct:
-        st.error("😕 Password incorrect")
-    return False
+    # --- Beautified Login Screen ---
+    st.title("🔒 Secure Login")
+    st.markdown("Please enter the password to access the matching tool.")
+
+    # Use columns to create a centered, narrower login box
+    col1, col2, col3 = st.columns([1, 1.5, 1]) 
+    
+    with col2:
+        with st.form("login_form"):
+            password = st.text_input(
+                "Password", 
+                type="password", 
+                key="password_input", 
+                label_visibility="collapsed", 
+                placeholder="Enter password"
+            )
+            submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
+
+            if submitted:
+                # Check password on form submission
+                try:
+                    # Use hmac.compare_digest for secure, constant-time comparison
+                    if hmac.compare_digest(password, st.secrets["password"]):
+                        st.session_state["password_correct"] = True
+                        st.rerun() # Rerun the script to show the main app
+                    else:
+                        st.error("😕 Password incorrect. Please try again.")
+                except KeyError:
+                     st.error("Error: Password not set in Streamlit Secrets.")
+                except Exception as e:
+                     st.error(f"An error occurred: {e}")
+            
+    return False # Return False to keep showing the login screen
 
 # ==============================================================================
 # Step 3: All Helper Functions
 # ==============================================================================
-# ... (All your helper functions: clean_text, intelligent_name_extraction, super_scorer, get_amount_score, find_nearest_match) ...
+# ... (All helper functions: clean_text, intelligent_name_extraction, super_scorer, get_amount_score, find_nearest_match) ...
 # (These are unchanged)
 
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower().strip()
     text = re.sub(r'(bhai|sinh|kumar|mohd|mohammed|ben)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'[^a-z0-9\s]', '', text)
+    text = re.sub(r'[^a-z0_9\s]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -171,167 +190,169 @@ def convert_df_to_csv(df):
 # ==============================================================================
 # Step 4: The Main Streamlit UI
 # ==============================================================================
-st.set_page_config(layout="wide")
+def show_main_app():
+    """This function contains the entire app logic that runs AFTER login."""
+    
+    st.title("🏦 Bank Transaction Matching Tool")
 
-# --- This is the new login gate ---
-if not check_password():
-    st.stop()  # Do not run the rest of the app if the password is not correct
+    if 'matched_data' not in st.session_state:
+        st.session_state.matched_data = None
+    if 'editing_index' not in st.session_state:
+        st.session_state.editing_index = None
 
-# --- The rest of your app code ---
-# (This code will only run if check_password() returns True)
+    st.header("Step 1: Upload Your Files")
+    col1, col2 = st.columns(2)
+    with col1:
+        customer_file = st.file_uploader("Upload Customer List (with 'ledger_name')", type="csv")
+    with col2:
+        bank_file = st.file_uploader("Upload Bank Statement (with 'date', 'narration', 'amount')", type="csv")
 
-st.title("🏦 Bank Transaction Matching Tool")
-
-if 'matched_data' not in st.session_state:
-    st.session_state.matched_data = None
-if 'editing_index' not in st.session_state:
-    st.session_state.editing_index = None
-
-st.header("Step 1: Upload Your Files")
-col1, col2 = st.columns(2)
-with col1:
-    customer_file = st.file_uploader("Upload Customer List (with 'ledger_name')", type="csv")
-with col2:
-    bank_file = st.file_uploader("Upload Bank Statement (with 'date', 'narration', 'amount')", type="csv")
-
-if customer_file and bank_file:
-    if st.button("Start Matching Process", type="primary"):
-        with st.spinner("Processing... This may take a moment."):
-            customers = pd.read_csv(customer_file, encoding='utf-8-sig')
-            transactions = pd.read_csv(bank_file, encoding='utf-8-sig')
-            required_bank_cols = ['date', 'narration', 'amount']
-            if not all(col in transactions.columns for col in required_bank_cols):
-                st.error(f"Error: Bank Statement file must contain the columns: {', '.join(required_bank_cols)}")
-                st.stop()
-            if 'ledger_name' not in customers.columns:
-                if len(customers.columns) > 0:
-                    first_col_name = customers.columns[0]
-                    st.toast(f"Warning: 'ledger_name' column not found. Using first column '{first_col_name}' instead.")
-                    customers.rename(columns={first_col_name: 'ledger_name'}, inplace=True)
-                else:
-                    st.error("Error: The customer file is empty or has no columns.")
+    if customer_file and bank_file:
+        if st.button("Start Matching Process", type="primary"):
+            with st.spinner("Processing... This may take a moment."):
+                customers = pd.read_csv(customer_file, encoding='utf-8-sig')
+                transactions = pd.read_csv(bank_file, encoding='utf-8-sig')
+                required_bank_cols = ['date', 'narration', 'amount']
+                if not all(col in transactions.columns for col in required_bank_cols):
+                    st.error(f"Error: Bank Statement file must contain the columns: {', '.join(required_bank_cols)}")
                     st.stop()
-            parser_regex = r'^(.*?)\s+(\d+\.?\d*)\s+([\w-]+)$'
-            customers[['customer_name', 'emi_amount', 'customer_id']] = customers['ledger_name'].str.extract(parser_regex)
-            transactions['date'] = pd.to_datetime(transactions['date'], errors='coerce')
-            customers['emi_amount'] = pd.to_numeric(customers['emi_amount'], errors='coerce').fillna(0)
-            transactions['amount'] = pd.to_numeric(transactions['amount'], errors='coerce').fillna(0)
-            customers['clean_name'] = customers['customer_name'].apply(clean_text)
-            transactions['extracted_name'] = transactions['narration'].apply(intelligent_name_extraction)
-            customer_choices = customers['clean_name'].tolist()
-            results_df = transactions.apply(
-                find_nearest_match,
-                args=(customers, customer_choices),
-                axis=1
-            )
-            results_df.columns = ['Matched Ledger Name', 'Other Candidates', 'Selection Options', 'Match Score', 'EMI Count', 'Name Score', 'Amount Score', 'Matched Customer ID']
-            final_df = pd.concat([transactions, results_df], axis=1)
-            final_df['Selected Match'] = final_df['Matched Ledger Name']
-            st.session_state.matched_data = final_df
-            st.session_state.editing_index = None
-        st.success("✅ Matching Complete! Please review the selections below.")
-
-if st.session_state.matched_data is not None:
-    st.header("Step 2: Review and Make Selections")
-    st.info("Click the 'Edit' button on any row to expand options and select an alternative match.")
-    
-    df = st.session_state.matched_data.copy()
-
-    sort_col1, sort_col2 = st.columns(2)
-    sort_by = sort_col1.selectbox("Sort by", ["Match Score", "date"])
-    ascending = sort_col2.selectbox("Order", ["Descending", "Ascending"])
-    
-    as_bool = True if ascending == "Ascending" else False
-    if sort_by == 'date':
-        df.sort_values(by='date', ascending=as_bool, inplace=True)
-    else:
-        df.sort_values(by='Match Score', ascending=as_bool, inplace=True)
-
-    st.markdown("---")
-    page_col1, page_col2, page_col3 = st.columns([1, 1, 2])
-    items_per_page = page_col1.selectbox("Items per page", [25, 50, 100], index=1)
-    total_items = len(df)
-    total_pages = (total_items // items_per_page) + (1 if total_items % items_per_page > 0 else 0)
-    current_page = page_col2.number_input("Page", min_value=1, max_value=total_pages, value=1)
-    page_col3.markdown(f"**Total transactions: {total_items}** (Showing page {current_page} of {total_pages})")
-
-    start_index = (current_page - 1) * items_per_page
-    end_index = start_index + items_per_page
-    df_page = df.iloc[start_index:end_index]
-    
-    header_cols = st.columns([2, 3, 1.5, 3.5, 1, 3, 1])
-    header_cols[0].markdown("**Date**")
-    header_cols[1].markdown("**Narration**")
-    header_cols[2].markdown("**Amount**")
-    header_cols[3].markdown("**Selected Match**")
-    header_cols[4].markdown("**Score**")
-    header_cols[5].markdown("**Other Candidates**")
-    header_cols[6].markdown("**Action**")
-    st.divider()
-
-    for index, row in df_page.iterrows():
-        row_cols = st.columns([2, 3, 1.5, 3.5, 1, 3, 1])
-        row_cols[0].write(row['date'].strftime('%Y-%m-%d') if pd.notna(row['date']) else "")
-        row_cols[1].write(row['narration'])
-        row_cols[2].write(row['amount'])
-        row_cols[3].write(row['Selected Match'] if pd.notna(row['Selected Match']) else "")
-        row_cols[4].write(f"{row['Match Score']:.2f}")
-        row_cols[5].write(row['Other Candidates'] if pd.notna(row['Other Candidates']) else "")
-        
-        if row_cols[6].button("Edit", key=f"edit_{index}"):
-            st.session_state.editing_index = index 
-            st.rerun()
-
-        if st.session_state.editing_index == index:
-            with st.expander(f"Editing: {row['narration']}", expanded=True):
-                options = row['Selection Options']
-                
-                current_selection_string = row['Selected Match']
-                if pd.isna(current_selection_string):
-                    current_selection_string = NONE_OPTION_TEXT
-                try:
-                    current_index = options.index(current_selection_string)
-                except ValueError:
-                    current_index = 0
-
-                new_selection = st.radio(
-                    "Choose the correct match:",
-                    options,
-                    index=current_index,
-                    key=f"radio_{index}"
-                )
-
-                exp_cols = st.columns([1,1,4])
-                if exp_cols[0].button("Save", key=f"save_{index}", type="primary"):
-                    if new_selection == NONE_OPTION_TEXT:
-                        final_selection_name = None
-                    elif "(Score:" in new_selection:
-                        final_selection_name = new_selection.split(" (Score:")[0]
+                if 'ledger_name' not in customers.columns:
+                    if len(customers.columns) > 0:
+                        first_col_name = customers.columns[0]
+                        st.toast(f"Warning: 'ledger_name' column not found. Using first column '{first_col_name}' instead.")
+                        customers.rename(columns={first_col_name: 'ledger_name'}, inplace=True)
                     else:
-                        final_selection_name = new_selection
-                    st.session_state.matched_data.loc[index, 'Selected Match'] = final_selection_name
-                    st.session_state.editing_index = None
-                    st.rerun()
+                        st.error("Error: The customer file is empty or has no columns.")
+                        st.stop()
+                parser_regex = r'^(.*?)\s+(\d+\.?\d*)\s+([\w-]+)$'
+                customers[['customer_name', 'emi_amount', 'customer_id']] = customers['ledger_name'].str.extract(parser_regex)
+                transactions['date'] = pd.to_datetime(transactions['date'], errors='coerce')
+                customers['emi_amount'] = pd.to_numeric(customers['emi_amount'], errors='coerce').fillna(0)
+                transactions['amount'] = pd.to_numeric(transactions['amount'], errors='coerce').fillna(0)
+                customers['clean_name'] = customers['customer_name'].apply(clean_text)
+                transactions['extracted_name'] = transactions['narration'].apply(intelligent_name_extraction)
+                customer_choices = customers['clean_name'].tolist()
+                results_df = transactions.apply(
+                    find_nearest_match,
+                    args=(customers, customer_choices),
+                    axis=1
+                )
+                results_df.columns = ['Matched Ledger Name', 'Other Candidates', 'Selection Options', 'Match Score', 'EMI Count', 'Name Score', 'Amount Score', 'Matched Customer ID']
+                final_df = pd.concat([transactions, results_df], axis=1)
+                final_df['Selected Match'] = final_df['Matched Ledger Name']
+                st.session_state.matched_data = final_df
+                st.session_state.editing_index = None
+            st.success("✅ Matching Complete! Please review the selections below.")
 
-                if exp_cols[1].button("Cancel", key=f"cancel_{index}"):
-                    st.session_state.editing_index = None
-                    st.rerun()
+    if st.session_state.matched_data is not None:
+        st.header("Step 2: Review and Make Selections")
+        st.info("Click the 'Edit' button on any row to expand options and select an alternative match.")
+        
+        df = st.session_state.matched_data.copy()
+
+        sort_col1, sort_col2 = st.columns(2)
+        sort_by = sort_col1.selectbox("Sort by", ["Match Score", "date"])
+        ascending = sort_col2.selectbox("Order", ["Descending", "Ascending"])
+        
+        as_bool = True if ascending == "Ascending" else False
+        if sort_by == 'date':
+            df.sort_values(by='date', ascending=as_bool, inplace=True)
+        else:
+            df.sort_values(by='Match Score', ascending=as_bool, inplace=True)
+
+        st.markdown("---")
+        page_col1, page_col2, page_col3 = st.columns([1, 1, 2])
+        items_per_page = page_col1.selectbox("Items per page", [25, 50, 100], index=1)
+        total_items = len(df)
+        total_pages = (total_items // items_per_page) + (1 if total_items % items_per_page > 0 else 0)
+        current_page = page_col2.number_input("Page", min_value=1, max_value=total_pages, value=1)
+        page_col3.markdown(f"**Total transactions: {total_items}** (Showing page {current_page} of {total_pages})")
+
+        start_index = (current_page - 1) * items_per_page
+        end_index = start_index + items_per_page
+        df_page = df.iloc[start_index:end_index]
+        
+        header_cols = st.columns([2, 3, 1.5, 3.5, 1, 3, 1])
+        header_cols[0].markdown("**Date**")
+        header_cols[1].markdown("**Narration**")
+        header_cols[2].markdown("**Amount**")
+        header_cols[3].markdown("**Selected Match**")
+        header_cols[4].markdown("**Score**")
+        header_cols[5].markdown("**Other Candidates**")
+        header_cols[6].markdown("**Action**")
         st.divider()
 
-# --- Download Button ---
-if st.session_state.matched_data is not None:
-    st.header("Step 3: Download Your Final Report")
-    
-    final_output_df = st.session_state.matched_data[
-        ['date', 'narration', 'amount', 'Selected Match', 'Match Score', 'Other Candidates']
-    ]
-    
-    csv_data = convert_df_to_csv(final_output_df)
-    
-    st.download_button(
-        label="Download Final CSV",
-        data=csv_data,
-        file_name="final_matched_transactions.csv",
-        mime="text/csv",
-        type="primary"
-    )
+        for index, row in df_page.iterrows():
+            row_cols = st.columns([2, 3, 1.5, 3.5, 1, 3, 1])
+            row_cols[0].write(row['date'].strftime('%Y-%m-%d') if pd.notna(row['date']) else "")
+            row_cols[1].write(row['narration'])
+            row_cols[2].write(row['amount'])
+            row_cols[3].write(row['Selected Match'] if pd.notna(row['Selected Match']) else "")
+            row_cols[4].write(f"{row['Match Score']:.2f}")
+            row_cols[5].write(row['Other Candidates'] if pd.notna(row['Other Candidates']) else "")
+            
+            if row_cols[6].button("Edit", key=f"edit_{index}"):
+                st.session_state.editing_index = index 
+                st.rerun()
+
+            if st.session_state.editing_index == index:
+                with st.expander(f"Editing: {row['narration']}", expanded=True):
+                    options = row['Selection Options']
+                    
+                    current_selection_string = row['Selected Match']
+                    if pd.isna(current_selection_string):
+                        current_selection_string = NONE_OPTION_TEXT
+                    try:
+                        current_index = options.index(current_selection_string)
+                    except ValueError:
+                        current_index = 0
+
+                    new_selection = st.radio(
+                        "Choose the correct match:",
+                        options,
+                        index=current_index,
+                        key=f"radio_{index}"
+                    )
+
+                    exp_cols = st.columns([1,1,4])
+                    if exp_cols[0].button("Save", key=f"save_{index}", type="primary"):
+                        if new_selection == NONE_OPTION_TEXT:
+                            final_selection_name = None
+                        elif "(Score:" in new_selection:
+                            final_selection_name = new_selection.split(" (Score:")[0]
+                        else:
+                            final_selection_name = new_selection
+                        st.session_state.matched_data.loc[index, 'Selected Match'] = final_selection_name
+                        st.session_state.editing_index = None
+                        st.rerun()
+
+                    if exp_cols[1].button("Cancel", key=f"cancel_{index}"):
+                        st.session_state.editing_index = None
+                        st.rerun()
+            st.divider()
+
+    # --- Download Button ---
+    if st.session_state.matched_data is not None:
+        st.header("Step 3: Download Your Final Report")
+        
+        final_output_df = st.session_state.matched_data[
+            ['date', 'narration', 'amount', 'Selected Match', 'Match Score', 'Other Candidates']
+        ]
+        
+        csv_data = convert_df_to_csv(final_output_df)
+        
+        st.download_button(
+            label="Download Final CSV",
+            data=csv_data,
+            file_name="final_matched_transactions.csv",
+            mime="text/csv",
+            type="primary"
+        )
+
+# ==============================================================================
+# Step 5: App Entry Point
+# ==============================================================================
+st.set_page_config(layout="wide")
+
+if check_password():
+    show_main_app()
