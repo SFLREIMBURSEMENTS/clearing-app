@@ -3,27 +3,55 @@ import pandas as pd
 from rapidfuzz import process, fuzz
 import re
 import io
+import hmac # Used for secure password checking
 
 # ==============================================================================
 # Step 1: Configuration
 # ==============================================================================
 NAME_WEIGHT = 0.90
 AMOUNT_WEIGHT = 0.10
-AMOUNT_TOLERANCE_LOWER = 0.05
-AMOUNT_TOLERANCE_UPPER = 0.20
+# ... (rest of your configuration remains the same) ...
 FIRST_NAME_INTEGRITY_PENALTY = 0.75
 MIDDLE_INITIAL_MISMATCH_PENALTY = 0.70
 MIDDLE_NAME_MISMATCH_PENALTY = 0.75
 UPI_MATCH_PENALTY = 0.75
 CANDIDATE_SCORE_RANGE = 15
 NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
-# --- THIS IS THE FIX ---
-# Lowered threshold to 80 to catch typos like "ishwer" vs "ishvar"
-MIDDLE_NAME_SIMILARITY_THRESHOLD = 80
+TYPO_SIMILARITY_THRESHOLD = 80
 
 # ==============================================================================
-# Step 2: All Helper Functions
+# Step 2: Password Check Function
 # ==============================================================================
+
+def check_password():
+    """Returns `True` if the user entered the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if hmac.compare_digest(st.session_state["password"], st.secrets["password"]):
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store password.
+        else:
+            st.session_state["password_correct"] = False
+
+    # Return True if the passward is validated.
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Show input for password.
+    st.text_input(
+        "Password", type="password", on_change=password_entered, key="password"
+    )
+    if "password_correct" in st.session_state and not st.session_state.password_correct:
+        st.error("😕 Password incorrect")
+    return False
+
+# ==============================================================================
+# Step 3: All Helper Functions
+# ==============================================================================
+# ... (All your helper functions: clean_text, intelligent_name_extraction, super_scorer, get_amount_score, find_nearest_match) ...
+# (These are unchanged)
+
 def clean_text(text):
     if not isinstance(text, str): return ''
     text = text.lower().strip()
@@ -35,7 +63,6 @@ def clean_text(text):
 def intelligent_name_extraction(narration):
     if not isinstance(narration, str): return ''
     narration_lower = narration.lower()
-
     if "upi" in narration_lower[:15]:
         upi_ids = re.findall(r'[\w.-]+@[\w.-]+', narration_lower)
         if not upi_ids: return ""
@@ -48,7 +75,6 @@ def intelligent_name_extraction(narration):
         text = narration_lower
         if "deposit by" in text:
             text = text.split("deposit by", 1)[-1]
-        
         text = re.sub(r'(bhai|sinh|kumar|mohd|mohammed|ben)', ' ', text, flags=re.IGNORECASE)
         text = re.sub(r'\b[a-z]{5}\d{4}[a-z]\b', ' ', text, flags=re.IGNORECASE)
         text = re.sub(r'[^a-z\s]', '', text)
@@ -58,31 +84,25 @@ def intelligent_name_extraction(narration):
 def super_scorer(s1, s2, **kwargs):
     if not s1 or not s2: return 0
     s1_words, s2_words = s1.split(), s2.split()
+    if not s1_words or not s2_words: return 0
     if s1 == s2: return 100.0
-    if len(s1_words) >= 2 and len(s2_words) > len(s1_words) and s2.startswith(s1): return 98.0
+    if len(s1_words) >= 2 and s2.startswith(s1): return 98.0
     if fuzz.token_set_ratio(s1, s2) == 100: return 97.0
     if len(s1_words) == 3 and len(s2_words) == 3 and len(s1_words[1]) == 1:
         if s1_words[0] == s2_words[0] and s1_words[2] == s2_words[2] and s1_words[1][0] == s2_words[1][0]:
             return 96.0
-            
     base_score = fuzz.token_set_ratio(s1, s2)
-    
+    if s1_words[0] != s2_words[0] and fuzz.ratio(s1_words[0], s2_words[0]) < TYPO_SIMILARITY_THRESHOLD:
+        return base_score * FIRST_NAME_INTEGRITY_PENALTY
     if len(s1_words) == 3 and len(s1_words[1]) == 1 and len(s2_words) == 3:
         if s1_words[1][0] != s2_words[1][0]:
             return base_score * MIDDLE_INITIAL_MISMATCH_PENALTY
-            
     if len(s1_words) >= 3 and len(s2_words) >= 3:
         if s1_words[0] == s2_words[0] and s1_words[-1] == s2_words[-1]:
             middle_name_similarity = fuzz.ratio(s1_words[1], s2_words[1])
-            # This condition is now fixed
-            if middle_name_similarity < MIDDLE_NAME_SIMILARITY_THRESHOLD:
+            if middle_name_similarity < TYPO_SIMILARITY_THRESHOLD:
                 return base_score * MIDDLE_NAME_MISMATCH_PENALTY
-
-    if s1_words and s2_words and s2_words[0] not in s1_words:
-         return base_score * FIRST_NAME_INTEGRITY_PENALTY
-    
     return base_score
-
 
 def get_amount_score(transaction_amt, emi_amt):
     best_score, best_multiplier = 0, 0
@@ -149,9 +169,17 @@ def convert_df_to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
 
 # ==============================================================================
-# Step 3: The Streamlit UI
+# Step 4: The Main Streamlit UI
 # ==============================================================================
 st.set_page_config(layout="wide")
+
+# --- This is the new login gate ---
+if not check_password():
+    st.stop()  # Do not run the rest of the app if the password is not correct
+
+# --- The rest of your app code ---
+# (This code will only run if check_password() returns True)
+
 st.title("🏦 Bank Transaction Matching Tool")
 
 if 'matched_data' not in st.session_state:
