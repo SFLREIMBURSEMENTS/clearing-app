@@ -3,9 +3,9 @@ import pandas as pd
 from rapidfuzz import process, fuzz
 import re
 import io
-import hmac # Used for secure password checking
+import hmac
 
-# ==============================================================================
+# =================================_=============================================
 # Step 1: Configuration
 # ==============================================================================
 NAME_WEIGHT = 0.90
@@ -21,23 +21,15 @@ NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
 TYPO_SIMILARITY_THRESHOLD = 80
 
 # ==============================================================================
-# Step 2: Password Check Function (Beautified)
+# Step 2: Password Check Function
 # ==============================================================================
 
 def check_password():
-    """Returns `True` if the user entered the correct password."""
-
-    # Return True if the password is already validated.
     if st.session_state.get("password_correct", False):
         return True
-
-    # --- Beautified Login Screen ---
     st.title("🔒 Secure Login")
     st.markdown("Please enter the password to access the matching tool.")
-
-    # Use columns to create a centered, narrower login box
     col1, col2, col3 = st.columns([1, 1.5, 1]) 
-    
     with col2:
         with st.form("login_form"):
             password = st.text_input(
@@ -48,28 +40,38 @@ def check_password():
                 placeholder="Enter password"
             )
             submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
-
             if submitted:
-                # Check password on form submission
                 try:
-                    # Use hmac.compare_digest for secure, constant-time comparison
                     if hmac.compare_digest(password, st.secrets["password"]):
                         st.session_state["password_correct"] = True
-                        st.rerun() # Rerun the script to show the main app
+                        st.rerun() 
                     else:
                         st.error("😕 Password incorrect. Please try again.")
                 except KeyError:
                      st.error("Error: Password not set in Streamlit Secrets.")
                 except Exception as e:
                      st.error(f"An error occurred: {e}")
-            
-    return False # Return False to keep showing the login screen
+    return False
 
 # ==============================================================================
 # Step 3: All Helper Functions
 # ==============================================================================
-# ... (All helper functions: clean_text, intelligent_name_extraction, super_scorer, get_amount_score, find_nearest_match) ...
-# (These are unchanged)
+
+# --- NEW: Function to prevent CSV Formula Injection ---
+def sanitize_cell(cell_value):
+    """
+    Sanitizes a single cell value to prevent CSV injection.
+    Adds a single quote to the beginning of strings that start with
+    '=', '+', '-', '@', '\t', or '\r'.
+    """
+    if isinstance(cell_value, str):
+        # Remove any leading whitespace to check the first real character
+        stripped_value = cell_value.lstrip()
+        if stripped_value.startswith(('=', '+', '-', '@', '\t', '\r')):
+            # Add a single quote to force Excel to treat it as text
+            return "'" + cell_value
+    # Return the original value if it's not a string or not dangerous
+    return cell_value
 
 def clean_text(text):
     if not isinstance(text, str): return ''
@@ -183,9 +185,12 @@ def find_nearest_match(txn_row, cust_df, cust_choices):
         best_match['customer_id']
     ])
 
+# --- UPDATED: convert_df_to_csv now sanitizes the data ---
 @st.cache_data
 def convert_df_to_csv(df):
-    return df.to_csv(index=False).encode('utf-8')
+    # Apply the sanitization function to every cell in the DataFrame
+    sanitized_df = df.map(sanitize_cell)
+    return sanitized_df.to_csv(index=False).encode('utf-8')
 
 # ==============================================================================
 # Step 4: The Main Streamlit UI
@@ -339,6 +344,7 @@ def show_main_app():
             ['date', 'narration', 'amount', 'Selected Match', 'Match Score', 'Other Candidates']
         ]
         
+        # The sanitization is now handled by convert_df_to_csv
         csv_data = convert_df_to_csv(final_output_df)
         
         st.download_button(
