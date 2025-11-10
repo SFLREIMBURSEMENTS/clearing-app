@@ -5,25 +5,29 @@ import re
 import io
 import hmac
 
-# =================================_=============================================
+# ==============================================================================
 # Step 1: Configuration
 # ==============================================================================
 NAME_WEIGHT = 0.90
 AMOUNT_WEIGHT = 0.10
 AMOUNT_TOLERANCE_LOWER = 0.05
 AMOUNT_TOLERANCE_UPPER = 0.20
+
+# --- Penalties and Thresholds ---
 FIRST_NAME_INTEGRITY_PENALTY = 0.75
 MIDDLE_INITIAL_MISMATCH_PENALTY = 0.70
 MIDDLE_NAME_MISMATCH_PENALTY = 0.75
 UPI_MATCH_PENALTY = 0.75
 CANDIDATE_SCORE_RANGE = 15
-NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
 TYPO_SIMILARITY_THRESHOLD = 80
+NONE_OPTION_TEXT = "-- NONE OF THE ABOVE --"
+# NEW: Penalty for single-word narrations matching multi-word names
+ONE_WORD_NARRATION_PENALTY = 0.80 # (20% score reduction)
+
 
 # ==============================================================================
 # Step 2: Password Check Function
 # ==============================================================================
-
 def check_password():
     if st.session_state.get("password_correct", False):
         return True
@@ -56,21 +60,11 @@ def check_password():
 # ==============================================================================
 # Step 3: All Helper Functions
 # ==============================================================================
-
-# --- NEW: Function to prevent CSV Formula Injection ---
 def sanitize_cell(cell_value):
-    """
-    Sanitizes a single cell value to prevent CSV injection.
-    Adds a single quote to the beginning of strings that start with
-    '=', '+', '-', '@', '\t', or '\r'.
-    """
     if isinstance(cell_value, str):
-        # Remove any leading whitespace to check the first real character
         stripped_value = cell_value.lstrip()
         if stripped_value.startswith(('=', '+', '-', '@', '\t', '\r')):
-            # Add a single quote to force Excel to treat it as text
             return "'" + cell_value
-    # Return the original value if it's not a string or not dangerous
     return cell_value
 
 def clean_text(text):
@@ -102,28 +96,46 @@ def intelligent_name_extraction(narration):
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
+# --- UPDATED: super_scorer with the new "Weak Narration Penalty" ---
 def super_scorer(s1, s2, **kwargs):
     if not s1 or not s2: return 0
     s1_words, s2_words = s1.split(), s2.split()
     if not s1_words or not s2_words: return 0
+
+    # --- Priority 1-4 Checks (High-confidence patterns) ---
     if s1 == s2: return 100.0
     if len(s1_words) >= 2 and s2.startswith(s1): return 98.0
     if fuzz.token_set_ratio(s1, s2) == 100: return 97.0
     if len(s1_words) == 3 and len(s2_words) == 3 and len(s1_words[1]) == 1:
         if s1_words[0] == s2_words[0] and s1_words[2] == s2_words[2] and s1_words[1][0] == s2_words[1][0]:
             return 96.0
+            
+    # --- Fallback to fuzzy logic with penalties ---
     base_score = fuzz.token_set_ratio(s1, s2)
+    score_to_return = base_score
+    
+    # Penalty 1: First Name Integrity Check
     if s1_words[0] != s2_words[0] and fuzz.ratio(s1_words[0], s2_words[0]) < TYPO_SIMILARITY_THRESHOLD:
-        return base_score * FIRST_NAME_INTEGRITY_PENALTY
-    if len(s1_words) == 3 and len(s1_words[1]) == 1 and len(s2_words) == 3:
+        score_to_return = base_score * FIRST_NAME_INTEGRITY_PENALTY
+    
+    # Penalty 2: Middle Name / Initial Checks (only if first names passed)
+    elif len(s1_words) == 3 and len(s1_words[1]) == 1 and len(s2_words) == 3:
         if s1_words[1][0] != s2_words[1][0]:
-            return base_score * MIDDLE_INITIAL_MISMATCH_PENALTY
-    if len(s1_words) >= 3 and len(s2_words) >= 3:
+            score_to_return = base_score * MIDDLE_INITIAL_MISMATCH_PENALTY
+    
+    elif len(s1_words) >= 3 and len(s2_words) >= 3:
         if s1_words[0] == s2_words[0] and s1_words[-1] == s2_words[-1]:
             middle_name_similarity = fuzz.ratio(s1_words[1], s2_words[1])
             if middle_name_similarity < TYPO_SIMILARITY_THRESHOLD:
-                return base_score * MIDDLE_NAME_MISMATCH_PENALTY
-    return base_score
+                score_to_return = base_score * MIDDLE_NAME_MISMATCH_PENALTY
+    
+    # --- NEW: Penalty 3: Weak (1-word) Narration Penalty ---
+    # This is applied *in addition* to other penalties if they also failed
+    if len(s1_words) == 1 and len(s2_words) > 1:
+        score_to_return = score_to_return * ONE_WORD_NARRATION_PENALTY
+
+    return score_to_return
+
 
 def get_amount_score(transaction_amt, emi_amt):
     best_score, best_multiplier = 0, 0
@@ -185,19 +197,15 @@ def find_nearest_match(txn_row, cust_df, cust_choices):
         best_match['customer_id']
     ])
 
-# --- UPDATED: convert_df_to_csv now sanitizes the data ---
 @st.cache_data
 def convert_df_to_csv(df):
-    # Apply the sanitization function to every cell in the DataFrame
-    sanitized_df = df.map(sanitize_cell)
+    sanitized_df = df.applymap(sanitize_cell)
     return sanitized_df.to_csv(index=False).encode('utf-8')
 
 # ==============================================================================
 # Step 4: The Main Streamlit UI
 # ==============================================================================
 def show_main_app():
-    """This function contains the entire app logic that runs AFTER login."""
-    
     st.title("🏦 Bank Transaction Matching Tool")
 
     if 'matched_data' not in st.session_state:
@@ -336,7 +344,6 @@ def show_main_app():
                         st.rerun()
             st.divider()
 
-    # --- Download Button ---
     if st.session_state.matched_data is not None:
         st.header("Step 3: Download Your Final Report")
         
@@ -344,7 +351,6 @@ def show_main_app():
             ['date', 'narration', 'amount', 'Selected Match', 'Match Score', 'Other Candidates']
         ]
         
-        # The sanitization is now handled by convert_df_to_csv
         csv_data = convert_df_to_csv(final_output_df)
         
         st.download_button(
